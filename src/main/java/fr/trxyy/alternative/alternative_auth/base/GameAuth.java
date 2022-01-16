@@ -104,7 +104,7 @@ public class GameAuth {
 	 * @param token
 	 * @param id
 	 */
-	private void setSession(String user, String token, String id) {
+	public void setSession(String user, String token, String id) {
 		this.session.setUsername(user);
 		this.session.setToken(token);
 		this.session.setUuid(id);
