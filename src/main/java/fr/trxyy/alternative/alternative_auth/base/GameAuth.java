@@ -3,6 +3,7 @@ package fr.trxyy.alternative.alternative_auth.base;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.HashMap;
 import java.util.UUID;
 
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -12,9 +13,13 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 
+import fr.trxyy.alternative.alternative_api.GameEngine;
+import fr.trxyy.alternative.alternative_api.GameSize;
 import fr.trxyy.alternative.alternative_auth.account.AccountType;
 import fr.trxyy.alternative.alternative_auth.account.Session;
 import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftAuth;
+import fr.trxyy.alternative.alternative_auth.microsoft.ParamType;
+import fr.trxyy.alternative.alternative_auth.microsoft.model.MicrosoftModel;
 import fr.trxyy.alternative.alternative_auth.mojang.model.MojangAuthResult;
 import javafx.collections.ListChangeListener;
 import javafx.scene.layout.Pane;
@@ -36,8 +41,7 @@ public class GameAuth {
 	 */
 	private Session session = new Session();
 	
-	private String username;
-	private String password;
+	private AuthConfig authConfig;
 
 	/**
 	 * The Constructor
@@ -47,8 +51,6 @@ public class GameAuth {
 	 * @param type The account Type (Mojang/Offline)
 	 */
 	public GameAuth(String user, String pwd, AccountType type) {
-		this.username=user;
-		this.password=pwd;
 		AuthConstants.displayCopyrights();
 		if (type.equals(AccountType.MOJANG)) {
 			this.connectMinecraft(user, pwd);
@@ -67,35 +69,55 @@ public class GameAuth {
 	 * @param root The parent to show in
 	 * @return The result in a WebView
 	 */
-	public WebView connectMicrosoft(Pane root) {
-		final WebView webView = new WebView();
-		final WebEngine webEngine = webView.getEngine();
-		webEngine.load(AuthConstants.MICROSOFT_BASE_URL);
-		webEngine.setJavaScriptEnabled(true);
-		webView.setPrefWidth(500);
-		webView.setPrefHeight(600);
-		root.getChildren().add(webView);
-		webEngine.getHistory().getEntries().addListener((ListChangeListener<WebHistory.Entry>) c -> {
-			if (c.next() && c.wasAdded()) {
-				c.getAddedSubList().forEach(entry -> {
-					try {
-						if (entry.getUrl().startsWith(AuthConstants.MICROSOFT_RESPONSE_URL)) {
-							String authCode = entry.getUrl().substring(entry.getUrl().indexOf("=") + 1, entry.getUrl().indexOf("&"));
-							Session result = new MicrosoftAuth().getAuthorizationCode(authCode);
-							this.setSession(result.getUsername(), result.getToken(), result.getUuid());
-							Stage stage = (Stage) root.getScene().getWindow();
-							stage.close();
-						} else {
-							this.isAuthenticated = false;
-						}
-					} catch (Exception e) {
-						e.printStackTrace();
-						;
-					}
-				});
-			}
-		});
-		return webView;
+	public WebView connectMicrosoft(GameEngine engine, Pane root) {
+	    this.authConfig = new AuthConfig(engine);
+	    final WebView webView = new WebView();
+	    final WebEngine webEngine = webView.getEngine();
+	    webView.setPrefWidth(500);
+	    webView.setPrefHeight(600);
+	    root.getChildren().add(webView);
+
+	    webEngine.load(AuthConstants.MICROSOFT_BASE_URL);
+	    webEngine.setJavaScriptEnabled(true);
+	    webEngine.getHistory().getEntries().addListener((ListChangeListener<WebHistory.Entry>) c -> {
+		    if (this.authConfig.canRefresh()) {
+		        try {
+		            Logger.log("Trying to logIn with RefreshToken.");
+		            this.authConfig.loadConfiguration();
+		            MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(ParamType.REFRESH, authConfig.microsoftModel.getRefresh_token());
+		            authConfig.updateValues(model);
+		            Session result = new MicrosoftAuth().getLiveToken(model.getAccess_token());
+		            this.setSession(result.getUsername(), result.getToken(), result.getUuid());
+		            Stage stage = (Stage) root.getScene().getWindow();
+		            stage.close();
+		        } catch (Exception e) {
+		            e.printStackTrace();
+		        }
+		    }
+
+
+		    else if (c.next() && c.wasAdded()) {
+	            c.getAddedSubList().forEach(entry -> {
+	                if (entry.getUrl().startsWith(AuthConstants.MICROSOFT_RESPONSE_URL)) {
+	                    try {
+	                        String authCode = entry.getUrl().substring(entry.getUrl().indexOf("=") + 1, entry.getUrl().indexOf("&"));
+	                        MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(ParamType.AUTH, authCode);
+	                        authConfig.createConfigFile(model);
+	                        Session result = new MicrosoftAuth().getLiveToken(model.getAccess_token());
+	                        this.setSession(result.getUsername(), result.getToken(), result.getUuid());
+	                        Stage stage = (Stage) root.getScene().getWindow();
+	                        stage.close();
+	                    } catch (Exception e) {
+	                        e.printStackTrace();
+	                    }
+	                } else {
+	                    this.isAuthenticated = false;
+	                }
+	            });
+	        }
+	    });
+
+	    return webView;
 	}
 	
 	/**
@@ -104,7 +126,7 @@ public class GameAuth {
 	 * @param token
 	 * @param id
 	 */
-	public void setSession(String user, String token, String id) {
+	private void setSession(String user, String token, String id) {
 		this.session.setUsername(user);
 		this.session.setToken(token);
 		this.session.setUuid(id);
@@ -163,13 +185,4 @@ public class GameAuth {
 	public Session getSession() {
 		return this.session;
 	}
-	
-	public String getUsername() {
-		return this.username;
-	}
-	
-	public String getPassword() {
-		return this.password;
-	}
-	
 }
