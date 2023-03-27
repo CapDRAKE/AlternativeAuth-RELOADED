@@ -26,16 +26,16 @@ public class AuthConfig {
 	 * @param engine The GameEngine instance
 	 */
 	public AuthConfig(GameEngine engine) {
-		this.authConfig = new File(engine.getGameFolder().getBinDir(), "auth_infos.json");
+		String roamingPath = System.getenv("APPDATA");
+		File authConfigDirectory = new File(roamingPath, "authconfig");
+		if (!authConfigDirectory.exists()) {
+		    authConfigDirectory.mkdirs();
+		}
+		this.authConfig = new File(authConfigDirectory, "auth_infos.json");
 	}
 	
 	public boolean canRefresh() {
-		if (!this.authConfig.exists()) {
-			return false;
-		}
-		else {
-			return true;
-		}
+	    return this.authConfig.exists();
 	}
 	
 	/**
@@ -61,7 +61,7 @@ public class AuthConfig {
 		configDetails.put(EnumAuthConfig.FOCI.getOption(), model.getFoci());
 
 		try {
-			FileWriter fw = new FileWriter(this.authConfig);
+			FileWriter fw = new FileWriter(this.authConfig, true);
 			JsonUtil.getGson().toJson(configDetails, fw);
 			fw.flush();
 		} catch (IOException e) {
