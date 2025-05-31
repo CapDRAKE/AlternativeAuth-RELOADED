@@ -1,11 +1,22 @@
 package fr.trxyy.alternative.alternative_auth.base;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.HashMap;
-import java.util.UUID;
-
+import com.sun.net.httpserver.HttpServer;
+import fr.trxyy.alternative.alternative_api.GameEngine;
+import fr.trxyy.alternative.alternative_auth.account.AccountType;
+import fr.trxyy.alternative.alternative_auth.account.Session;
+import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftAuth;
+import fr.trxyy.alternative.alternative_auth.microsoft.ParamType;
+import fr.trxyy.alternative.alternative_auth.microsoft.model.MicrosoftModel;
+import fr.trxyy.alternative.alternative_auth.mojang.model.MojangAuthResult;
+import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
+import javafx.geometry.Insets;
+import javafx.scene.Scene;
+import javafx.scene.control.ProgressIndicator;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.Pane;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.ContentType;
@@ -13,176 +24,225 @@ import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 
-import fr.trxyy.alternative.alternative_api.GameEngine;
-import fr.trxyy.alternative.alternative_api.GameSize;
-import fr.trxyy.alternative.alternative_auth.account.AccountType;
-import fr.trxyy.alternative.alternative_auth.account.Session;
-import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftAuth;
-import fr.trxyy.alternative.alternative_auth.microsoft.ParamType;
-import fr.trxyy.alternative.alternative_auth.microsoft.model.MicrosoftModel;
-import fr.trxyy.alternative.alternative_auth.mojang.model.MojangAuthResult;
-import javafx.collections.ListChangeListener;
-import javafx.scene.layout.Pane;
-import javafx.scene.web.WebEngine;
-import javafx.scene.web.WebHistory;
-import javafx.scene.web.WebView;
-import javafx.stage.Stage;
+import java.awt.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.text.DecimalFormat;
+import java.util.UUID;
 
 /**
- * @author Trxyy
+ * GameAuth
  */
 public class GameAuth {
-	/**
-	 * Is player authed ?
-	 */
-	public boolean isAuthenticated = false;
-	/**
-	 * The session
-	 */
-	private Session session = new Session();
-	
-	private AuthConfig authConfig;
 
-	/**
-	 * The Constructor
-	 * 
-	 * @param user The username/mail
-	 * @param pwd  The password
-	 * @param type The account Type (Mojang/Offline)
-	 */
-	public GameAuth(String user, String pwd, AccountType type) {
-		AuthConstants.displayCopyrights();
-		if (type.equals(AccountType.MOJANG)) {
-			this.connectMinecraft(user, pwd);
-		} else if (type.equals(AccountType.OFFLINE)) {
-			this.setSession(user, TokenGenerator.generateToken(user), UUID.randomUUID().toString().replace("-", ""));
-		}
-	}
+    private static final int LOCAL_PORT = 51735;
 
-	public GameAuth(AccountType type) {
-		AuthConstants.displayCopyrights();
-	}
+    private final DecimalFormat ONE_DEC = new DecimalFormat(".#");
 
-	/**
-	 * Connect to minecraft with a Microsoft account
-	 * 
-	 * @param root The parent to show in
-	 * @return The result in a WebView
-	 */
-	public WebView connectMicrosoft(GameEngine engine, Pane root) {
-	    this.authConfig = new AuthConfig(engine);
-	    final WebView webView = new WebView();
-	    final WebEngine webEngine = webView.getEngine();
-	    webView.setPrefWidth(500);
-	    webView.setPrefHeight(600);
-	    root.getChildren().add(webView);
+    private boolean isAuthenticated = false;
+    private Session session = new Session();
 
-	    webEngine.load(AuthConstants.MICROSOFT_BASE_URL);
-	    webEngine.setJavaScriptEnabled(true);
-	    webEngine.getHistory().getEntries().addListener((ListChangeListener<WebHistory.Entry>) c -> {
-		    if (this.authConfig.canRefresh()) {
-		        try {
-		            Logger.log("Trying to logIn with RefreshToken.");
-		            this.authConfig.loadConfiguration();
-		            MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(ParamType.REFRESH, authConfig.microsoftModel.getRefresh_token());
-		            authConfig.updateValues(model);
-		            Session result = new MicrosoftAuth().getLiveToken(model.getAccess_token());
-		            this.setSession(result.getUsername(), result.getToken(), result.getUuid());
-		            Stage stage = (Stage) root.getScene().getWindow();
-		            stage.close();
-		        } catch (Exception e) {
-		            e.printStackTrace();
-		        }
-		    }
+    private AuthConfig authConfig;
 
+    /*──────────────────────────  Constructeurs  ──────────────────────────*/
 
-		    else if (c.next() && c.wasAdded()) {
-	            c.getAddedSubList().forEach(entry -> {
-	                if (entry.getUrl().startsWith(AuthConstants.MICROSOFT_RESPONSE_URL)) {
-	                    try {
-	                        String authCode = entry.getUrl().substring(entry.getUrl().indexOf("=") + 1, entry.getUrl().indexOf("&"));
-	                        MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(ParamType.AUTH, authCode);
-	                        authConfig.createConfigFile(model);
-	                        Session result = new MicrosoftAuth().getLiveToken(model.getAccess_token());
-	                        this.setSession(result.getUsername(), result.getToken(), result.getUuid());
-	                        Stage stage = (Stage) root.getScene().getWindow();
-	                        stage.close();
-	                    } catch (Exception e) {
-	                        e.printStackTrace();
-	                    }
-	                } else {
-	                    this.isAuthenticated = false;
-	                }
-	            });
-	        }
-	    });
+    public GameAuth(String user, String pwd, AccountType type) {
+        AuthConstants.displayCopyrights();
+        if (type == AccountType.MOJANG) {
+            connectMinecraft(user, pwd);
+        } else if (type == AccountType.OFFLINE) {
+            setSession(user, TokenGenerator.generateToken(user), UUID.randomUUID().toString().replace("-", ""));
+        }
+    }
 
-	    return webView;
-	}
-	
-	/**
-	 * Set the session credentials
-	 * @param user
-	 * @param token
-	 * @param id
-	 */
-	private void setSession(String user, String token, String id) {
-		this.session.setUsername(user);
-		this.session.setToken(token);
-		this.session.setUuid(id);
-		this.isAuthenticated = true;
-		Logger.log("Connected Successfully !");
-	}
+    public GameAuth(AccountType type) {
+        AuthConstants.displayCopyrights();
+    }
 
-	/**
-	 * Connect to minecraft servers using POST request
-	 * 
-	 * @param username The username
-	 * @param password The password
-	 * @return The result
-	 */
-	public void connectMinecraft(String username, String password) {
-		CloseableHttpClient httpClient = HttpClientBuilder.create().build();
-		try {
-			HttpPost httpPost = new HttpPost(AuthConstants.MOJANG_BASE_URL);
-			StringEntity parameters = new StringEntity("{\"agent\":{\"name\":\"Minecraft\",\"version\":1},\"username\":\"" + username + "\",\"password\":\"" + password + "\"}", ContentType.create(AuthConstants.APP_JSON));
-			httpPost.addHeader("content-type", AuthConstants.APP_JSON);
-			httpPost.setEntity(parameters);
-			CloseableHttpResponse closeableHttpResponse = httpClient.execute(httpPost);
-			BufferedReader bufferedReader = new BufferedReader(
-					new InputStreamReader(closeableHttpResponse.getEntity().getContent()));
-			String jsonResponse = bufferedReader.readLine();
-			if (!jsonResponse.contains("\"name\"")) {
-				this.isAuthenticated = false;
-			}
-			MojangAuthResult authResult = AuthConstants.getGson().fromJson(jsonResponse, MojangAuthResult.class);
-			this.setSession(authResult.getSelectedProfile().getName(), authResult.getAccessToken(), authResult.getSelectedProfile().getId());
-		} catch (Exception exception) {
-			try {
-				httpClient.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		} finally {
-			try {
-				httpClient.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		}
-	}
+    /*──────────────────────  Auth Microsoft  ──────────────────────*/
 
-	/**
-	 * @return  If the user is successfully authenticated
-	 */
-	public boolean isLogged() {
-		return this.isAuthenticated;
-	}
+    public void connectMicrosoft(GameEngine engine, Pane root) {
+        this.authConfig = new AuthConfig(engine);
 
-	/**
-	 * @return The session of the user
-	 */
-	public Session getSession() {
-		return this.session;
-	}
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setPrefSize(80, 80);
+        StackPane content = new StackPane(spinner);
+        content.setPadding(new Insets(20));
+
+        Stage dlg = new Stage();
+        dlg.setScene(new Scene(content, 300, 160));
+        dlg.setTitle("Connexion Microsoft");
+        dlg.initModality(Modality.APPLICATION_MODAL);
+        dlg.setResizable(false);
+        dlg.show();
+
+        new Thread(() -> {
+            try {
+                if (authConfig.canRefresh()) {
+                    Logger.log("Using stored Microsoft refresh_token …");
+                    authConfig.loadConfiguration();
+                    MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(
+                            ParamType.REFRESH,
+                            authConfig.microsoftModel.getRefresh_token());
+                    authConfig.updateValues(model);
+                    Session res = new MicrosoftAuth().getLiveToken(model.getAccess_token());
+                    Platform.runLater(() -> success(res, dlg));
+                    return;
+                }
+
+                LocalHttpReceiver receiver = new LocalHttpReceiver(LOCAL_PORT);
+                MicrosoftAuth msAuth = new MicrosoftAuth();
+                String state = UUID.randomUUID().toString();
+                String authUrl = msAuth.getAuthorizationUrl(state);
+
+                Desktop.getDesktop().browse(URI.create(authUrl));
+
+                receiver.waitForCode().thenAccept(code -> {
+                    try {
+                        MicrosoftModel model = msAuth.getAuthorizationCode(ParamType.AUTH, code);
+                        authConfig.createConfigFile(model);
+                        Session res = msAuth.getLiveToken(model.getAccess_token());
+                        Platform.runLater(() -> success(res, dlg));
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                        Platform.runLater(() -> error(dlg));
+                    } finally {
+                        receiver.stop();
+                    }
+                });
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                Platform.runLater(() -> error(dlg));
+            }
+        }).start();
+    }
+
+    private void success(Session session, Stage dlg) {
+        setSession(session.getUsername(), session.getToken(), session.getUuid());
+        dlg.close();
+    }
+
+    private void error(Stage dlg) {
+        this.isAuthenticated = false;
+        dlg.close();
+    }
+
+    /*─────────────────  Serveur HTTP local  ─────────────────*/
+
+    private static final class LocalHttpReceiver {
+        private final HttpServer server;
+        private final java.util.concurrent.CompletableFuture<String> codeFuture = new java.util.concurrent.CompletableFuture<>();
+
+        LocalHttpReceiver(int port) throws IOException {
+            server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
+            server.createContext("/callback", exchange -> {
+                String query = exchange.getRequestURI().getRawQuery();
+                String response = "<html><body>Connexion terminée, vous pouvez retourner dans le launcher.</body></html>";
+                exchange.sendResponseHeaders(200, response.length());
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(response.getBytes());
+                }
+                if (query != null) {
+                    for (String kv : query.split("&")) {
+                        if (kv.startsWith("code=")) {
+                            codeFuture.complete(kv.substring("code=".length()));
+                            break;
+                        }
+                    }
+                }
+            });
+            server.start();
+        }
+
+        java.util.concurrent.CompletableFuture<String> waitForCode() {
+            return codeFuture;
+        }
+
+        void stop() {
+            server.stop(0);
+        }
+    }
+
+    /*──────────────────  Auth Mojang (inchangée)  ──────────────────*/
+
+    public void connectMinecraft(String username, String password) {
+        try (CloseableHttpClient httpClient = HttpClientBuilder.create().build()) {
+            HttpPost httpPost = new HttpPost(AuthConstants.MOJANG_BASE_URL);
+            StringEntity parameters = new StringEntity(
+                    "{\"agent\":{\"name\":\"Minecraft\",\"version\":1},\"username\":\"" + username + "\",\"password\":\"" + password + "\"}",
+                    ContentType.create(AuthConstants.APP_JSON));
+            httpPost.addHeader("content-type", AuthConstants.APP_JSON);
+            httpPost.setEntity(parameters);
+            try (CloseableHttpResponse resp = httpClient.execute(httpPost)) {
+                BufferedReader br = new BufferedReader(new InputStreamReader(resp.getEntity().getContent()));
+                String json = br.readLine();
+                if (!json.contains("\"name\"")) {
+                    this.isAuthenticated = false;
+                    return;
+                }
+                MojangAuthResult result = AuthConstants.getGson().fromJson(json, MojangAuthResult.class);
+                setSession(result.getSelectedProfile().getName(), result.getAccessToken(), result.getSelectedProfile().getId());
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    /*──────────────────  Setters / Getters  ──────────────────*/
+
+    private void setSession(String user, String token, String id) {
+        this.session.setUsername(user);
+        this.session.setToken(token);
+        this.session.setUuid(id);
+        this.isAuthenticated = true;
+        Logger.log("Connected successfully as " + user);
+    }
+
+    public void setSession(Session s) {
+        setSession(s.getUsername(), s.getToken(), s.getUuid());
+    }
+
+    public boolean isLogged() {
+        return isAuthenticated;
+    }
+
+    public Session getSession() {
+        return session;
+    }
+
+    /* ------------------------------------------------------------------
+     *  Tentative silencieuse : si un refresh_token est présent et valide
+     *  → on met à jour la Session et on renvoie true.
+     *  Sinon renvoie false et ne modifie rien.
+     * ------------------------------------------------------------------ */
+    public boolean trySilentRefresh(GameEngine engine) {
+        try {
+            this.authConfig = new AuthConfig(engine);   // même répertoire que d'habitude
+            if (!authConfig.canRefresh()) return false; // aucun token stocké
+
+            authConfig.loadConfiguration();             // lit alt_auth.json
+            MicrosoftAuth ms = new MicrosoftAuth();
+
+            MicrosoftModel m = ms.getAuthorizationCode(
+                    ParamType.REFRESH,
+                    authConfig.microsoftModel.getRefresh_token());
+
+            // on persiste le nouveau couple access/refresh
+            authConfig.updateValues(m);
+
+            Session s = ms.getLiveToken(m.getAccess_token());
+            setSession(s);                              // met à jour this.session + isAuthenticated
+            return true;
+
+        } catch (Exception ex) {
+            Logger.log("Silent refresh failed : " + ex.getMessage());
+            return false;                               // token absent, expiré ou invalide
+        }
+    }
+
 }
