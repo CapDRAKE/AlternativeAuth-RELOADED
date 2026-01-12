@@ -1,15 +1,14 @@
 package fr.trxyy.alternative.alternative_auth.base;
 
-import com.sun.net.httpserver.HttpServer;
 import fr.trxyy.alternative.alternative_api.GameEngine;
 import fr.trxyy.alternative.alternative_auth.account.AccountType;
 import fr.trxyy.alternative.alternative_auth.account.Session;
-import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftAuth;
-import fr.trxyy.alternative.alternative_auth.microsoft.ParamType;
+import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftXboxAuth;
+import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftOAuthClient;
+import fr.trxyy.alternative.alternative_auth.microsoft.MicrosoftOAuthClient.DeviceCode;
 import fr.trxyy.alternative.alternative_auth.microsoft.model.MicrosoftModel;
 import fr.trxyy.alternative.alternative_auth.mojang.model.MojangAuthResult;
 import javafx.application.Platform;
-import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.ProgressIndicator;
@@ -26,22 +25,14 @@ import org.apache.http.impl.client.HttpClientBuilder;
 
 import java.awt.*;
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
 import java.net.URI;
-import java.text.DecimalFormat;
 import java.util.UUID;
 
 /**
  * GameAuth
  */
 public class GameAuth {
-
-    private static final int LOCAL_PORT = 51735;
-
-    private final DecimalFormat ONE_DEC = new DecimalFormat(".#");
 
     private boolean isAuthenticated = false;
     private Session session = new Session();
@@ -82,38 +73,39 @@ public class GameAuth {
 
         new Thread(() -> {
             try {
-                if (authConfig.canRefresh()) {
-                    Logger.log("Using stored Microsoft refresh_token …");
-                    authConfig.loadConfiguration();
-                    MicrosoftModel model = new MicrosoftAuth().getAuthorizationCode(
-                            ParamType.REFRESH,
-                            authConfig.microsoftModel.getRefresh_token());
-                    authConfig.updateValues(model);
-                    Session res = new MicrosoftAuth().getLiveToken(model.getAccess_token());
-                    Platform.runLater(() -> success(res, dlg));
+                /* ===================== SILENT LOGIN ===================== */
+                if (trySilentRefresh(engine)) {
+                    Platform.runLater(() -> dlg.close());
                     return;
                 }
 
-                LocalHttpReceiver receiver = new LocalHttpReceiver(LOCAL_PORT);
-                MicrosoftAuth msAuth = new MicrosoftAuth();
-                String state = UUID.randomUUID().toString();
-                String authUrl = msAuth.getAuthorizationUrl(state);
+                /* ===================== DEVICE FLOW ===================== */
+                MicrosoftOAuthClient deviceAuth = new MicrosoftOAuthClient();
 
-                Desktop.getDesktop().browse(URI.create(authUrl));
+                // 1️⃣ Récupération du device code
+                DeviceCode deviceCode = deviceAuth.requestDeviceCode();
 
-                receiver.waitForCode().thenAccept(code -> {
-                    try {
-                        MicrosoftModel model = msAuth.getAuthorizationCode(ParamType.AUTH, code);
-                        authConfig.createConfigFile(model);
-                        Session res = msAuth.getLiveToken(model.getAccess_token());
-                        Platform.runLater(() -> success(res, dlg));
-                    } catch (Exception ex) {
-                        ex.printStackTrace();
-                        Platform.runLater(() -> error(dlg));
-                    } finally {
-                        receiver.stop();
-                    }
+                // 2️⃣ Ouvre la page Microsoft officielle
+                Desktop.getDesktop().browse(
+                        URI.create(deviceCode.getVerificationUri())
+                );
+
+                // 3️⃣ Affiche le code à l’utilisateur (UI à toi)
+                Platform.runLater(() -> {
+                    Logger.log("Code Microsoft : " + deviceCode.getUserCode());
+                    // 👉 idéalement : popup / label visible
                 });
+
+                // 4️⃣ Polling jusqu’à validation
+                MicrosoftModel model = deviceAuth.pollForToken(deviceCode);
+
+                // 5️⃣ Sauvegarde tokens
+                authConfig.createConfigFile(model);
+
+                // 6️⃣ Chaîne Xbox → XSTS → Minecraft
+                Session res = new MicrosoftXboxAuth().getLiveToken(model.getAccess_token());
+
+                Platform.runLater(() -> success(res, dlg));
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -130,42 +122,6 @@ public class GameAuth {
     private void error(Stage dlg) {
         this.isAuthenticated = false;
         dlg.close();
-    }
-
-    /*─────────────────  Serveur HTTP local  ─────────────────*/
-
-    private static final class LocalHttpReceiver {
-        private final HttpServer server;
-        private final java.util.concurrent.CompletableFuture<String> codeFuture = new java.util.concurrent.CompletableFuture<>();
-
-        LocalHttpReceiver(int port) throws IOException {
-            server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
-            server.createContext("/callback", exchange -> {
-                String query = exchange.getRequestURI().getRawQuery();
-                String response = "<html><body>Connexion terminée, vous pouvez retourner dans le launcher.</body></html>";
-                exchange.sendResponseHeaders(200, response.length());
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(response.getBytes());
-                }
-                if (query != null) {
-                    for (String kv : query.split("&")) {
-                        if (kv.startsWith("code=")) {
-                            codeFuture.complete(kv.substring("code=".length()));
-                            break;
-                        }
-                    }
-                }
-            });
-            server.start();
-        }
-
-        java.util.concurrent.CompletableFuture<String> waitForCode() {
-            return codeFuture;
-        }
-
-        void stop() {
-            server.stop(0);
-        }
     }
 
     /*──────────────────  Auth Mojang (inchangée)  ──────────────────*/
@@ -222,27 +178,29 @@ public class GameAuth {
      * ------------------------------------------------------------------ */
     public boolean trySilentRefresh(GameEngine engine) {
         try {
-            this.authConfig = new AuthConfig(engine);   // même répertoire que d'habitude
-            if (!authConfig.canRefresh()) return false; // aucun token stocké
+            this.authConfig = new AuthConfig(engine);
+            if (!authConfig.canRefresh()) return false;
 
-            authConfig.loadConfiguration();             // lit alt_auth.json
-            MicrosoftAuth ms = new MicrosoftAuth();
+            authConfig.loadConfiguration();
 
-            MicrosoftModel m = ms.getAuthorizationCode(
-                    ParamType.REFRESH,
-                    authConfig.microsoftModel.getRefresh_token());
+            MicrosoftOAuthClient deviceAuth = new MicrosoftOAuthClient();
 
-            // on persiste le nouveau couple access/refresh
+            // 🔁 Device Flow refresh
+            MicrosoftModel m = deviceAuth.refreshWithToken(
+                    authConfig.microsoftModel.getRefresh_token()
+            );
+
             authConfig.updateValues(m);
 
-            Session s = ms.getLiveToken(m.getAccess_token());
-            setSession(s);                              // met à jour this.session + isAuthenticated
+            Session s = new MicrosoftXboxAuth().getLiveToken(m.getAccess_token());
+            setSession(s);
             return true;
 
         } catch (Exception ex) {
             Logger.log("Silent refresh failed : " + ex.getMessage());
-            return false;                               // token absent, expiré ou invalide
+            return false;
         }
     }
+
 
 }

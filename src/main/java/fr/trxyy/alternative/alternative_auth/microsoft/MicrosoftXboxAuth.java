@@ -30,7 +30,7 @@ import fr.trxyy.alternative.alternative_auth.microsoft.model.XboxLiveModel;
  * POST /token.srf     → access_token
  * puis chaîne Xbox → XSTS → Minecraft.
  */
-public class MicrosoftAuth {
+public class MicrosoftXboxAuth {
 
     /* Live ID v1 constants */
     private static final String CLIENT_ID = "00000000402b5328";

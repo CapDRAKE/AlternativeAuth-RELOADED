@@ -43,30 +43,31 @@ public class AuthConfig {
 	 */
 	@SuppressWarnings("unchecked")
 	public void createConfigFile(MicrosoftModel model) {
-		if (!this.authConfig.exists()) {
-			try {
-				this.authConfig.createNewFile();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
-		}
-		
-		JSONObject configDetails = new JSONObject();
-		configDetails.put(EnumAuthConfig.ACCESS_TOKEN.getOption(), model.getAccess_token());
-		configDetails.put(EnumAuthConfig.REFRESH_TOKEN.getOption(), model.getRefresh_token());
-		configDetails.put(EnumAuthConfig.USER_ID.getOption(), model.getUser_id());
-		configDetails.put(EnumAuthConfig.SCOPE.getOption(), model.getScope());
-		configDetails.put(EnumAuthConfig.TOKEN_TYPE.getOption(), model.getToken_type());
-		configDetails.put(EnumAuthConfig.EXPIRES_IN.getOption(), model.getExpires_in());
-		configDetails.put(EnumAuthConfig.FOCI.getOption(), model.getFoci());
 
-		try {
-			FileWriter fw = new FileWriter(this.authConfig, true);
-			JsonUtil.getGson().toJson(configDetails, fw);
-			fw.flush();
-		} catch (IOException e) {
-			e.printStackTrace();
-		}
+	    try {
+	        if (!this.authConfig.exists()) {
+	            this.authConfig.createNewFile();
+	        }
+
+	        JSONObject configDetails = new JSONObject();
+	        configDetails.put(EnumAuthConfig.ACCESS_TOKEN.getOption(), model.getAccess_token());
+	        configDetails.put(EnumAuthConfig.REFRESH_TOKEN.getOption(), model.getRefresh_token());
+	        configDetails.put(EnumAuthConfig.USER_ID.getOption(), model.getUser_id());
+	        configDetails.put(EnumAuthConfig.SCOPE.getOption(), model.getScope());
+	        configDetails.put(EnumAuthConfig.TOKEN_TYPE.getOption(), model.getToken_type());
+	        configDetails.put(EnumAuthConfig.EXPIRES_IN.getOption(), model.getExpires_in());
+	        configDetails.put(EnumAuthConfig.FOCI.getOption(), model.getFoci());
+
+	        try (FileWriter fw = new FileWriter(this.authConfig, false)) {
+	            JsonUtil.getGson().toJson(configDetails, fw);
+	        }
+	        Logger.log("createConfigFile() called");
+	        Logger.log("Auth config path = " + this.authConfig.getAbsolutePath());
+
+
+	    } catch (IOException e) {
+	        e.printStackTrace();
+	    }
 	}
 	
 	/**
@@ -100,6 +101,7 @@ public class AuthConfig {
 	/**
 	 * Update a value in the config json
 	 */
+	@SuppressWarnings("unchecked")
 	public void updateValue(String toUpdate, Object value) {
 		this.loadConfiguration();
 		String configJson = JsonUtil.getGson().toJson(this.microsoftModel);
@@ -117,6 +119,7 @@ public class AuthConfig {
 	/**
 	 * Update multiple values in the config json
 	 */
+	@SuppressWarnings("unchecked")
 	public void updateValues(HashMap<String, String> values) {
 		this.loadConfiguration();
 		String configJson = JsonUtil.getGson().toJson(this.microsoftModel);
