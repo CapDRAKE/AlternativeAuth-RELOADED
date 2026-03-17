@@ -21,7 +21,7 @@ import fr.trxyy.alternative.alternative_auth.microsoft.model.MicrosoftModel;
 public class MicrosoftOAuthClient {
 
 	/* ===== Microsoft endpoints ===== */
-	private static final String CLIENT_ID = "";
+	private static final String CLIENT_ID = "33250748-fc1d-4053-825e-1e7b345d5d95";
 
 	private static final String DEVICE_CODE_URL =
 	        "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
